@@ -1,4 +1,5 @@
 /output/
+/dist/
 /.bdpan-token.json
 *.token.json
 /.agents/
