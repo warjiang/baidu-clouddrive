@@ -29,27 +29,21 @@ func TestHashFile(t *testing.T) {
 	}
 }
 
-func TestMutatingCommandNeedsConfirmation(t *testing.T) {
-	cmd := New("dev")
-	cmd.SetArgs([]string{"file", "delete", "--filelist", `["/x"]`})
-	if err := cmd.Execute(); err == nil {
-		t.Fatal("delete should require --yes")
+func TestLegacyCommandsRemoved(t *testing.T) {
+	for _, name := range []string{"file", "user", "upload", "upload-part", "precreate", "create"} {
+		cmd := New("dev")
+		cmd.SetArgs([]string{name})
+		if err := cmd.Execute(); err == nil {
+			t.Fatalf("legacy %s command remains", name)
+		}
 	}
 }
 
 func TestCommandRejectsUnexpectedArgs(t *testing.T) {
 	cmd := New("dev")
-	cmd.SetArgs([]string{"file", "list", "unexpected"})
+	cmd.SetArgs([]string{"info", "unexpected"})
 	if err := cmd.Execute(); err == nil {
-		t.Fatal("file list should reject positional arguments")
-	}
-}
-
-func TestUploadPartRejectsNegativeSequence(t *testing.T) {
-	cmd := New("dev")
-	cmd.SetArgs([]string{"file", "upload-part", "--path", "/x", "--uploadid", "id", "--file", "part", "--partseq", "-1", "--yes"})
-	if err := cmd.Execute(); err == nil {
-		t.Fatal("upload-part should reject a negative part sequence")
+		t.Fatal("info should reject positional arguments")
 	}
 }
 
