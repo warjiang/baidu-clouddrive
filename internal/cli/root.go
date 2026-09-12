@@ -26,18 +26,20 @@ type field struct {
 }
 
 type apiSpec struct {
-	use      string
-	short    string
-	method   string
-	base     string
-	path     string
-	query    url.Values
-	fields   []field
-	mutating bool
+	use    string
+	short  string
+	method string
+	base   string
+	path   string
+	query  url.Values
+	fields []field
 }
 
 func New(version string) *cobra.Command {
-	cfg := &config{}
+	return newRoot(version, &config{})
+}
+
+func newRoot(version string, cfg *config) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:           "bdpan",
 		Short:         "Baidu Netdisk Open Platform CLI",
@@ -49,7 +51,9 @@ func New(version string) *cobra.Command {
 			envFallback(&cfg.appKey, "BAIDU_APP_KEY")
 			envFallback(&cfg.secretKey, "BAIDU_SECRET_KEY")
 			envFallback(&cfg.accessToken, "BAIDU_ACCESS_TOKEN")
-			cfg.client = &http.Client{Timeout: cfg.timeout}
+			if cfg.client == nil {
+				cfg.client = &http.Client{Timeout: cfg.timeout}
+			}
 			return nil
 		},
 	}
@@ -60,15 +64,24 @@ func New(version string) *cobra.Command {
 	cmd.PersistentFlags().StringVar(&cfg.secretKey, "secret-key", "", "Application SecretKey (or BAIDU_SECRET_KEY)")
 	cmd.PersistentFlags().StringVar(&cfg.accessToken, "access-token", "", "Access token (or BAIDU_ACCESS_TOKEN)")
 	cmd.PersistentFlags().StringVar(&cfg.tokenFile, "token-file", defaultTokenFile(), "Token file")
-	cmd.PersistentFlags().DurationVar(&cfg.timeout, "timeout", 30*time.Second, "HTTP timeout")
+	cmd.PersistentFlags().DurationVar(&cfg.timeout, "timeout", 30*time.Second, "API request timeout; minimum file-transfer idle timeout (automatically extended)")
 
-	cmd.AddCommand(newAuthCmd(cfg), newUserCmd(cfg), newFileCmd(cfg))
+	cmd.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
+		for parent := cmd; parent != nil; parent = parent.Parent() {
+			if parent.Name() == "auth" {
+				return err
+			}
+		}
+		return withCode(252, err)
+	})
+	cmd.AddCommand(newAuthCmd(cfg))
+	cmd.AddCommand(queryCommands(cfg)...)
+	cmd.AddCommand(fileCommands(cfg)...)
 	return cmd
 }
 
-func newUserCmd(cfg *config) *cobra.Command {
-	cmd := &cobra.Command{Use: "user", Short: "User and quota information"}
-	cmd.AddCommand(
+func queryCommands(cfg *config) []*cobra.Command {
+	return []*cobra.Command{
 		newAPICommand(cfg, apiSpec{
 			use: "info", short: "Get user information", method: http.MethodGet, base: panBase,
 			path: "/rest/2.0/xpan/nas", query: values("method", "uinfo"),
@@ -81,32 +94,6 @@ func newUserCmd(cfg *config) *cobra.Command {
 				{name: "checkfree", def: "1", help: "Check free quota"},
 				{name: "checkexpire", def: "1", help: "Check quota nearing expiration"},
 			},
-		}),
-	)
-	return cmd
-}
-
-func newFileCmd(cfg *config) *cobra.Command {
-	cmd := &cobra.Command{Use: "file", Short: "Query, manage, and upload files"}
-	cmd.AddCommand(
-		newAPICommand(cfg, apiSpec{
-			use: "list", short: "List files in a directory", method: http.MethodGet, base: panBase,
-			path: "/rest/2.0/xpan/file", query: values("method", "list"),
-			fields: fields(
-				"dir", false, false, "/", "Absolute directory path",
-				"num", false, false, "", "Items per page",
-				"page", false, false, "", "Page number",
-				"channel", false, false, "", "Channel",
-				"clienttype", false, false, "", "Client type",
-				"app_id", false, false, "", "AppID",
-				"order", false, false, "name", "Sort by name/time/size",
-				"desc", false, false, "0", "Set to 1 for descending order",
-				"start", false, false, "0", "Start offset",
-				"limit", false, false, "100", "Maximum number of results",
-				"web", false, false, "0", "Return thumbnails",
-				"folder", false, false, "0", "Return directories only",
-				"showempty", false, false, "0", "Return whether directories are empty",
-			),
 		}),
 		newAPICommand(cfg, apiSpec{
 			use: "docs", short: "List documents", method: http.MethodGet, base: panBase,
@@ -128,22 +115,6 @@ func newFileCmd(cfg *config) *cobra.Command {
 				"num", false, false, "500", "Fixed at 500",
 				"recursion", false, false, "", "Set a value to search recursively",
 				"web", false, false, "", "Set a value to return thumbnails",
-				"device_id", false, false, "", "Hardware device ID",
-			),
-		}),
-		newAPICommand(cfg, apiSpec{
-			use: "list-all", short: "List files recursively", method: http.MethodGet, base: panBase,
-			path: "/rest/2.0/xpan/multimedia", query: values("method", "listall"),
-			fields: fields(
-				"path", true, false, "", "Absolute application directory path",
-				"recursion", false, false, "0", "Whether to recurse",
-				"order", false, false, "name", "Sort by name/time/size",
-				"desc", false, false, "0", "Set to 1 for descending order",
-				"start", false, false, "0", "Start offset",
-				"limit", false, false, "1000", "Maximum 10000",
-				"ctime", false, false, "", "Minimum creation time",
-				"mtime", false, false, "", "Minimum modification time",
-				"web", false, false, "0", "Return thumbnails",
 				"device_id", false, false, "", "Hardware device ID",
 			),
 		}),
@@ -178,76 +149,16 @@ func newFileCmd(cfg *config) *cobra.Command {
 				"from_apaas", false, false, "", "Paid high-speed traffic entitlement",
 			),
 		}),
-		newManagerCommand(cfg, "copy"),
-		newManagerCommand(cfg, "move"),
-		newManagerCommand(cfg, "rename"),
-		newManagerCommand(cfg, "delete"),
-		newAPICommand(cfg, apiSpec{
-			use: "precreate", short: "Precreate an upload", method: http.MethodPost, base: panBase,
-			path: "/rest/2.0/xpan/file", query: values("method", "precreate"), mutating: true,
-			fields: fields(
-				"path", true, true, "", "Absolute destination path",
-				"size", true, true, "", "File size",
-				"isdir", true, true, "0", "0 file/1 directory",
-				"block_list", true, true, "", "JSON array of part MD5 hashes",
-				"autoinit", true, true, "1", "Fixed at 1",
-				"rtype", false, true, "1", "1/2 rename, 3 overwrite",
-				"uploadid", false, true, "", "Existing upload ID",
-				"content-md5", false, true, "", "File MD5",
-				"slice-md5", false, true, "", "MD5 of the first 256 KB",
-				"local_ctime", false, true, "", "Local creation time",
-				"local_mtime", false, true, "", "Local modification time",
-			),
-		}),
-		newUploadPartCmd(cfg),
-		newAPICommand(cfg, apiSpec{
-			use: "create", short: "Commit uploaded parts and create a file", method: http.MethodPost, base: panBase,
-			path: "/rest/2.0/xpan/file", query: values("method", "create"), mutating: true,
-			fields: fields(
-				"path", true, true, "", "Absolute destination path",
-				"size", true, true, "", "File size",
-				"isdir", true, true, "0", "0 file/1 directory",
-				"block_list", true, true, "", "JSON array of part MD5 hashes",
-				"uploadid", true, true, "", "Upload ID returned by precreate",
-				"rtype", false, true, "1", "Naming policy",
-				"local_ctime", false, true, "", "Local creation time",
-				"local_mtime", false, true, "", "Local modification time",
-				"zip_quality", false, true, "", "Image compression quality",
-				"zip_sign", false, true, "", "Original image MD5",
-				"is_revision", false, true, "", "Enable file revisions",
-				"mode", false, true, "", "Upload mode",
-				"exif_info", false, true, "", "EXIF JSON",
-			),
-		}),
-		newUploadCmd(cfg),
-	)
-	return cmd
-}
-
-func newManagerCommand(cfg *config, operation string) *cobra.Command {
-	return newAPICommand(cfg, apiSpec{
-		use: operation, short: map[string]string{"copy": "Copy files", "move": "Move files", "rename": "Rename files", "delete": "Delete files"}[operation],
-		method: http.MethodPost, base: panBase, path: "/rest/2.0/xpan/file",
-		query: values("method", "filemanager", "opera", operation), mutating: true,
-		fields: fields(
-			"async", true, true, "1", "0 synchronous/1 adaptive/2 asynchronous",
-			"filelist", true, true, "", "JSON array of files to operate on",
-			"ondup", false, true, "", "fail/newcopy/overwrite/skip",
-		),
-	})
+	}
 }
 
 func newAPICommand(cfg *config, spec apiSpec) *cobra.Command {
 	valuesByName := make(map[string]*string, len(spec.fields))
-	var yes bool
 	cmd := &cobra.Command{
 		Use:   spec.use,
 		Short: spec.short,
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if spec.mutating && !yes {
-				return errors.New("this command changes the netdisk; pass --yes to continue")
-			}
 			token, err := cfg.resolveAccessToken()
 			if err != nil {
 				return err
@@ -282,9 +193,6 @@ func newAPICommand(cfg *config, spec apiSpec) *cobra.Command {
 		value := f.def
 		valuesByName[f.name] = &value
 		cmd.Flags().StringVar(valuesByName[f.name], flagName(f.name), f.def, f.help)
-	}
-	if spec.mutating {
-		cmd.Flags().BoolVar(&yes, "yes", false, "Confirm modifying the netdisk")
 	}
 	return cmd
 }

@@ -93,7 +93,7 @@ func (cfg *config) request(ctx context.Context, method, endpoint string, query, 
 	}
 	resp, err := cfg.client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, safeNetworkError(err)
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(resp.Body)
@@ -104,9 +104,24 @@ func (cfg *config) request(ctx context.Context, method, endpoint string, query, 
 		if apiError(data) != nil {
 			return data, nil
 		}
-		return nil, fmt.Errorf("HTTP %s: %s", resp.Status, strings.TrimSpace(string(data)))
+		return nil, fmt.Errorf("HTTP status %d", resp.StatusCode)
 	}
 	return data, nil
+}
+
+func safeNetworkError(err error) error {
+	if errors.Is(err, context.Canceled) {
+		return context.Canceled
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return context.DeadlineExceeded
+	}
+	var u *url.Error
+	if errors.As(err, &u) {
+		// Never include a URL: API tokens and signed download links live there.
+		return errors.New("HTTP request failed")
+	}
+	return err
 }
 
 func (cfg *config) resolveAccessToken() (string, error) {

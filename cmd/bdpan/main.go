@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -16,11 +15,14 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	if err := cli.New(version).ExecuteContext(ctx); err != nil {
+	root := cli.New(version)
+	executed, err := root.ExecuteContextC(ctx)
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
-		if errors.Is(err, context.Canceled) {
-			os.Exit(130)
+		code := cli.ExitCode(err)
+		if executed == root && code == 1 {
+			code = 252 // Unknown command or root-level usage error.
 		}
-		os.Exit(1)
+		os.Exit(code)
 	}
 }
