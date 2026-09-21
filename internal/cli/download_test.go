@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -20,7 +21,7 @@ import (
 
 func TestRangedDownloads(t *testing.T) {
 	for _, mode := range []string{
-		"parallel", "retry", "truncated", "expired", "fallback",
+		"parallel", "hex-md5", "retry", "truncated", "expired", "fallback",
 		"bad-range", "bad-total", "bad-length", "overlong", "bad-md5",
 		"changed-etag", "missing-etag", "changed-metadata", "exhausted", "cancel",
 	} {
@@ -85,7 +86,11 @@ func TestRangedDownloads(t *testing.T) {
 					r.Header.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, len(data)))
 					r.Header.Set("ETag", `"file-v1"`)
 					digest := md5.Sum(data[start : end+1])
-					r.Header.Set("Content-MD5", base64.StdEncoding.EncodeToString(digest[:]))
+					if mode == "hex-md5" {
+						r.Header.Set("Content-MD5", hex.EncodeToString(digest[:]))
+					} else {
+						r.Header.Set("Content-MD5", base64.StdEncoding.EncodeToString(digest[:]))
+					}
 					if mode == "fallback" {
 						return response(req, data), nil
 					}
@@ -139,7 +144,7 @@ func TestRangedDownloads(t *testing.T) {
 					cancel()
 				}
 				err := <-done
-				success := mode == "parallel" || mode == "retry" || mode == "truncated" || mode == "expired" || mode == "fallback"
+				success := mode == "parallel" || mode == "hex-md5" || mode == "retry" || mode == "truncated" || mode == "expired" || mode == "fallback"
 				if (err == nil) != success {
 					t.Fatalf("unexpected result: %v", err)
 				}

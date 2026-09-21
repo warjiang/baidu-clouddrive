@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -144,8 +145,9 @@ func copyDownload(resp *http.Response, target io.Writer, size int64) (bool, erro
 	if err != io.EOF {
 		return true, fmt.Errorf("download final read: %w", err)
 	}
-	if digest := resp.Header.Get("Content-MD5"); digest != "" &&
-		digest != base64.StdEncoding.EncodeToString(hash.Sum(nil)) {
+	if digest, sum := resp.Header.Get("Content-MD5"), hash.Sum(nil); digest != "" &&
+		digest != base64.StdEncoding.EncodeToString(sum) &&
+		!strings.EqualFold(digest, hex.EncodeToString(sum)) {
 		return false, errors.New("download Content-MD5 mismatch")
 	}
 	return false, nil
